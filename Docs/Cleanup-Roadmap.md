@@ -89,12 +89,15 @@ Cleanup_OM (and follow-up PRs → development)
 ├─ 0. Repo hygiene (started)
 │     e.g. DelphiStandards .gitignore
 │
-├─ 1. DUnit → DUnitX migration                ← done on Cleanup_OM-DUnitX-migration
+├─ 1. DUnit → DUnitX migration                ← done (merged PR #1 on fork)
 │     DUnitX complete + fail-set parity; DUnit retained for comparison
-│     (single runner / remove DUnit = later PR)
 │
-├─ 2. AEAD architecture split (from PR #90 concern A)
-│     Base + GCM stream/multi-call only; review as core API change
+├─ 1b. Red-test cleanup (product/test debt from parity suite)
+│     ├─ Keccak Cluster A (test data / Unicode expected)  ← Cleanup_OM-fix-keccak-tests
+│     └─ GCM multi-chunk Cluster B (Option A, see §3.1) ← next
+│
+├─ 2. AEAD architecture package (from PR #90 concern A)
+│     Base lifecycle + wire GCM/CCM; may *subsume* the Option A GCM streaming state
 │
 ├─ 3. ChaCha / XChaCha / Poly1305 (from PR #90 concern B)
 │     On top of settled AEAD base; algorithms + tests
@@ -103,11 +106,28 @@ Cleanup_OM (and follow-up PRs → development)
       As separate reviewable packages if not absorbed earlier
 ```
 
+### 3.1 GCM multi-chunk strategy (binding)
+
+**Problem:** `TGCM.Encode`/`Decode` recompute GHASH over only the current buffer and overwrite the tag. CTR (`FY`) is cumulative, so multi-call ciphertext can be correct while the **authentication tag is wrong**. CAVS set 105 is the first 2-block (32-byte) case in `TestEncodeStreamChunked`; earlier sets are single-chunk.
+
+**Option A (now):** Local, reviewable fix **inside `TGCM` only**:
+
+- Keep a running GHASH state, partial block buffer, and total ciphertext length.
+- Absorb AAD once before ciphertext GHASH; pad AAD to 16-byte boundary.
+- Each `Encode`/`Decode` updates CTR + GHASH over that chunk’s ciphertext.
+- Finalize lengths + tag in **`TGCM.Done`**, called from `TDECCipherModes.Done` before tag verify.
+- Do **not** invent a public AEAD base API in this step.
+
+**AEAD package (later):** Generalize streaming as InitAuth / Update / Finalize for GCM, CCM, and Poly1305. The Option A state machine is the **GCM-specific core** that package should absorb—not throw away. Document any public API changes there, not in the hotfix.
+
+**Out of scope for Option A:** ChaCha, full PR #90 merge, “ignore the chunked test” as a substitute for a product fix.
+
 ### Why this order
 
 1. **Tests first:** architecture and cipher merges need a single, trustworthy automated suite. Dual DUnit/DUnitX weakens that signal.
-2. **Architecture before features:** ChaCha-as-AEAD depends on (or must not re-introduce) the multi-call authenticated-mode model; shipping ChaCha on the old GCM-only shape and then rewriting the base again is wasted motion.
-3. **Separation of review:** maintainers can accept/reject AEAD API changes without blocking or rubber-stamping a large SIMD cipher contribution.
+2. **Targeted GCM fix before full AEAD refactor:** restores multi-call correctness without blocking on a large design review; AEAD can still refactor the same logic later.
+3. **Architecture before ChaCha features:** ChaCha-as-AEAD depends on (or must not re-introduce) multi-call authenticated-mode behaviour.
+4. **Separation of review:** maintainers can accept/reject AEAD API changes without rubber-stamping SIMD cipher work.
 
 ---
 
