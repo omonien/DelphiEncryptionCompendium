@@ -38,58 +38,44 @@ Rationale: architecture changes redefine how authenticated modes work for the wh
 
 ---
 
-## 2. Prerequisite: complete DUnit → DUnitX migration
+## 2. Prerequisite: DUnit → DUnitX migration (DUnit kept for comparison)
 
-**Before** tackling the AEAD architecture split (and before large cipher-mode refactors), the unit-test suite must be **fully migrated to DUnitX**.
+**Before** tackling the AEAD architecture split (and before large cipher-mode refactors), DUnitX must become a **complete, parity-proven** runner for the whole suite.
 
-### 2.1 Current state (as of `development` / start of `Cleanup_OM`)
+**Status (branch `Cleanup_OM-DUnitX-migration`, 2026-07-22):** migration work is **done for this phase**. DUnitX is the **target authoritative runner**. The classic **DUnit suite remains** until parity is trusted longer-term and a **later PR** removes it (not part of this migration).
+
+| Phase | DUnit (`DECDUnitTestSuite`) | DUnitX (`DECDUnitXTestSuite`) |
+|---|---|---|
+| **Now (migration branch complete)** | Kept; comparison baseline | Complete unit list; parity-proven fail-set; preferred for new work |
+| **Later (separate PR)** | Remove after explicit decision | Only runner; drop dual-stack / compatibility |
+
+Detailed plan: **[`Docs/plans/2026-07-22-dunitx-migration.md`](plans/2026-07-22-dunitx-migration.md)**  
+Parity log: **[`Docs/plans/dunitx-parity-log.md`](plans/dunitx-parity-log.md)**
+
+### 2.1 Binding constraint: keep DUnit temporarily
+
+The classic **DUnit suite stays** for the time being so we can **compare results** (same tests, both runners) and prove the migration did not drop or alter behaviour.
+
+### 2.2 Achieved state after migration branch
 
 | Item | Status |
 |---|---|
-| Classic DUnit project | `Unit Tests/DECDUnitTestSuite.dpr` (+ `.dproj`) — uses `TestFramework` |
-| DUnitX project | `Unit Tests/DECDUnitXTestSuite.dpr` (+ `.dproj`) |
-| Shared switch | `Unit Tests/Tests/TestDefines.inc` — `{.$DEFINE DUnitX}` (**off by default**) |
-| Dual-stack tests | Most units under `Unit Tests/Tests/*.pas` use `{$IFDEF DUnitX}` for uses / `[TestFixture]` / registration, and still fall back to classic `TestFramework` / DUnit runners |
-| Compatibility layer | Several units import `DUnitX.DUnitCompatibility` when DUnitX is on — transitional, not end state |
-| Coverage tooling | `Unit Tests/CodeCoverage/` historically oriented around the DUnit-era suite |
+| Classic DUnit project | `Unit Tests/DECDUnitTestSuite.*` — still builds/runs (comparison) |
+| DUnitX project | **Full** unit list matching DUnit, including **CCM**, **ZIP**, AEAD common test data; DPR hardened (explicit registration, `UseRTTI := False`, exit codes, console mode) |
+| Shared switch | `Unit Tests/Tests/TestDefines.inc` — `{.$DEFINE DUnitX}` **off by default**; DUnitX dproj supplies the define |
+| Dual-stack tests | Fixtures register under both `{$IFDEF DUnitX}` and classic DUnit |
+| Assert style | Still `Check*` via `DUnitX.DUnitCompatibility` (native `Assert.*` deferred) |
+| **Fail-set parity** | Both suites: **12 shared failures** (Keccak digest vectors + GCM chunked stream tag — product/test debt, not migration). **0 DUnitX-only failures** |
 
-The suite is therefore **dual-stack**: one codebase, two frameworks, compile-time selected. That is useful historically, but it:
-
-- doubles project/maintenance surface,
-- encourages DUnit-shaped APIs (`TTestCase`, compatibility shims) instead of idiomatic DUnitX,
-- complicates CI (“which runner is authoritative?”),
-- will fight larger AEAD refactors that need clear, single-runner green/red signals.
-
-### 2.2 Target state
+### 2.3 Later target (after comparison period — not this branch)
 
 | Item | Target |
 |---|---|
 | Framework | **DUnitX only** |
-| Classic DUnit project | Removed (or left unmaintained only if a temporary deprecation notice is required — prefer removal) |
-| `TestDefines.inc` dual mode | Removed or reduced to non-framework defines; no DUnit fallback |
-| Test units | Idiomatic DUnitX: `[TestFixture]`, `[Test]`, `Assert.*` / DUnitX asserts, `TDUnitX.RegisterTestFixture` (or attribute discovery as chosen consistently) |
-| `DUnitX.DUnitCompatibility` | Eliminated once call sites no longer need it |
-| Default / CI runner | `DECDUnitXTestSuite` (console; optional GUI/TestInsight kept only if still useful) |
-| Documentation | README / CONTRIBUTING mention DUnitX only |
-
-Success criteria:
-
-1. All existing tests compile and run under DUnitX without `TestFramework` / classic DUnit packages.
-2. No remaining `{$IFDEF DUnitX}` dual paths in test units (except temporary WIP on a sub-branch).
-3. One documented way to run the full suite from IDE and command line.
-4. Code coverage (if kept) wired to the DUnitX suite.
-
-### 2.3 Suggested migration steps (implementation order)
-
-These steps are guidance for a later implementation PR (or series of PRs on `Cleanup_OM`):
-
-1. **Baseline:** enable `DUnitX` in `TestDefines.inc`, run full `DECDUnitXTestSuite`, record pass/fail inventory.
-2. **Project cleanup:** make DUnitX the only suite in the group project; stop shipping dual search paths for DUnit.
-3. ** mechanize unit-by-unit:** drop `TestFramework` uses and `{$ELSE}` DUnit branches; keep behaviour identical.
-4. **Remove compatibility layer:** replace remaining DUnit-compatible assert/test-case patterns with native DUnitX.
-5. **Delete** `DECDUnitTestSuite` (and obsolete ModelSupport / DUnit-only assets if unused).
-6. **Update docs** (readme “Has it been tested?”, CONTRIBUTING) and any coverage scripts.
-7. **Optional:** align layout/naming later (`tests/` etc.) — out of scope for the framework migration itself.
+| DUnit project | Removed |
+| Native asserts | `Assert.*`; drop `DUnitCompatibility` |
+| Docs / CI | DUnitX only |
+| Shared 12 failures | Fix as product/test work (Keccak / GCM), independent of runner choice |
 
 Do **not** mix this migration with AEAD architecture or ChaCha feature work in the same PR.
 
@@ -103,8 +89,9 @@ Cleanup_OM (and follow-up PRs → development)
 ├─ 0. Repo hygiene (started)
 │     e.g. DelphiStandards .gitignore
 │
-├─ 1. DUnit → DUnitX migration (complete)     ← next major technical step
-│     Single test runner, no dual-stack
+├─ 1. DUnit → DUnitX migration                ← done on Cleanup_OM-DUnitX-migration
+│     DUnitX complete + fail-set parity; DUnit retained for comparison
+│     (single runner / remove DUnit = later PR)
 │
 ├─ 2. AEAD architecture split (from PR #90 concern A)
 │     Base + GCM stream/multi-call only; review as core API change
@@ -145,7 +132,10 @@ Cleanup_OM (and follow-up PRs → development)
 | DUnit project | `Unit Tests/DECDUnitTestSuite.*` |
 | DUnitX project | `Unit Tests/DECDUnitXTestSuite.*` |
 | Dual-stack switch | `Unit Tests/Tests/TestDefines.inc` |
+| DUnitX migration plan | `Docs/plans/2026-07-22-dunitx-migration.md` |
+| DUnit / DUnitX parity log | `Docs/plans/dunitx-parity-log.md` |
+| Migration branch | `Cleanup_OM-DUnitX-migration` |
 
 ---
 
-*Document created as part of cleanup planning on `Cleanup_OM`. Update this file when a step completes or a decision changes.*
+*Document created as part of cleanup planning on `Cleanup_OM`. Updated 2026-07-22 for completed DUnitX migration phase (DUnit still retained for comparison).*
