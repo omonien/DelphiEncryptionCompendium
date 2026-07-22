@@ -116,6 +116,7 @@ Cleanup_OM (and follow-up PRs → development)
 - Absorb AAD once before ciphertext GHASH; pad AAD to 16-byte boundary.
 - Each `Encode`/`Decode` updates CTR + GHASH over that chunk’s ciphertext.
 - Finalize lengths + tag in **`TGCM.Done`**, called from `TDECCipherModes.Done` before tag verify.
+- `TGCM.Done` must be **idempotent**; after finalization, `Encode`/`Decode` must **reject** further updates until the message is reinitialized via `Init`.
 - Do **not** invent a public AEAD base API in this step.
 
 **AEAD package (later):** Generalize streaming as InitAuth / Update / Finalize for GCM, CCM, and Poly1305. The Option A state machine is the **GCM-specific core** that package should absorb—not throw away. Document any public API changes there, not in the hotfix.
