@@ -166,6 +166,7 @@
         <DCCReference Include="Tests\TestDECCipherModesCCM.pas"/>
         <DCCReference Include="Tests\AuthenticatedCiphersCommonTestData.pas"/>
         <DCCReference Include="Tests\TestDECChaChaPoly1305.pas"/>
+        <DCCReference Include="Tests\TestDECAESNI.pas"/>
         <None Include="Tests\TestDefines.inc"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>

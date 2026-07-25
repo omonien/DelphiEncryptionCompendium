@@ -44,7 +44,8 @@ uses
   TestDECCipherPaddings in 'Tests\TestDECCipherPaddings.pas',
   TestDECCipherModesCCM in 'Tests\TestDECCipherModesCCM.pas',
   AuthenticatedCiphersCommonTestData in 'Tests\AuthenticatedCiphersCommonTestData.pas',
-  TestDECChaChaPoly1305 in 'Tests\TestDECChaChaPoly1305.pas';
+  TestDECChaChaPoly1305 in 'Tests\TestDECChaChaPoly1305.pas',
+  TestDECAESNI in 'Tests\TestDECAESNI.pas';
 
 {$R *.RES}
 

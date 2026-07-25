@@ -381,8 +381,16 @@ type
   end;
 
   TCipher_Rijndael = class(TDECFormattedCipher)
+    // Don't change these class constants (AES block width / max rounds).
+    const
+      Rijndael_Blocks = 4;
+      Rijndael_Rounds = 14;
   private
     FRounds: Integer;
+    // True when DoInit built an AES-NI key schedule (standard 16/24/32-byte
+    // keys, UseAESAsm, CPU AES-NI). Encode/decode follow this flag so
+    // non-standard key sizes stay on the PAS path.
+    FAESAsmActive: Boolean;
     /// <summary>
     ///   Calculates the key used for encoding. Implemented is the "new AES
     ///   conform key scheduling".
@@ -410,6 +418,12 @@ type
     procedure DoEncode(Source, Dest: Pointer; Size: Integer); override;
     procedure DoDecode(Source, Dest: Pointer; Size: Integer); override;
   public
+    /// <summary>
+    ///   When True and the CPU has AES-NI and the ASM path is compiled
+    ///   (X86ASM/X64ASM), use hardware AES. Default is set at unit
+    ///   initialization from CPUID. Set False to force the pure Pascal path.
+    /// </summary>
+    class var UseAESAsm: Boolean;
     class function Context: TCipherContext; override;
     /// <summary>
     ///   Gets the number of rounds/times the algorithm is being applied to the
@@ -2830,111 +2844,539 @@ end;
 { TCipher_Rijndael }
 
 class function TCipher_Rijndael.Context: TCipherContext;
-const
-  // don't change this!
-  Rijndael_Blocks =  4;
-  Rijndael_Rounds = 14;
 begin
   Result.KeySize                     := 32;
   Result.BlockSize                   := Rijndael_Blocks * 4;
   Result.BufferSize                  := Rijndael_Blocks * 4;
-  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2;
+  // +$20 spare so AlignPtr32(FAdditionalBuffer) + max AES-NI schedule fits.
+  // PAS path still uses FAdditionalBufferSize shr 1 for encode/decode halves.
+  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2 + $20;
   Result.NeedsAdditionalBufferBackup := False;
   Result.MinRounds                   := 1;
   Result.MaxRounds                   := 1;
   Result.CipherType                  := [ctSymmetric, ctBlock];
 end;
 
+{$IF defined(X86ASM) or defined(X64ASM)}
+
+// ###########################################
+// #### AES-NI assembler (Intel AES whitepaper)
+// #### https://www.intel.com/content/dam/develop/external/us/en/documents/aes-wp-2012-09-22-v01-165683.pdf
+// #### Only compiled when X86ASM or X64ASM is defined (off under PUREPASCAL/NO_ASM/FPC).
+// ###########################################
+
+// Assumes registers preloaded — only call from BuildAsmKey128.
+procedure KeyExpand128; register;
+asm
+   pshufd xmm2, xmm2, $ff;
+   movapd xmm3, xmm1;
+   pslldq xmm3, $04;
+   pxor xmm1, xmm3;
+   movapd xmm3, xmm1;
+   pslldq xmm3, $04;
+   pxor xmm1, xmm3;
+   movapd xmm3, xmm1;
+   pslldq xmm3, $04;
+   pxor xmm1, xmm3;
+   pxor xmm1, xmm2;
+   {$IFDEF X64ASM}
+   movdqu [rdx], xmm1;
+   add rdx, $10;
+   {$ELSE}
+   movdqu [edx], xmm1;
+   add edx, $10;
+   {$ENDIF}
+end;
+
+procedure BuildAsmKey128(Key: PByte; Dest: PLongWord); register;
+// eax: key, edx: dest  /  rcx: key, rdx: dest
+asm
+   xorpd xmm2, xmm2;
+   {$IFDEF X64ASM}
+   movdqu xmm1, [rcx];
+   movdqu [rdx], xmm1;
+   add rdx, 16;
+   {$ELSE}
+   movdqu xmm1, [eax];
+   movdqu [edx], xmm1;
+   add edx, 16;
+   {$ENDIF}
+
+   aeskeygenassist xmm2, xmm1, $1;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $2;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $4;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $8;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $10;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $20;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $40;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $80;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $1b;
+   call KeyExpand128;
+   aeskeygenassist xmm2, xmm1, $36;
+   call KeyExpand128;
+end;
+
+// Only call from BuildAsmKey192 — assumes xmm0/xmm1/xmm2 preloaded.
+procedure KeyExpand192; register;
+asm
+   pshufd xmm1, xmm1, $55;
+   movapd xmm3, xmm0;
+   pslldq xmm3, $04;
+   pxor xmm0, xmm3;
+
+   pslldq xmm3, $04;
+   pxor xmm0, xmm3;
+
+   pslldq xmm3, $04;
+   pxor xmm0, xmm3;
+
+   pxor xmm0, xmm1;
+   pshufd xmm1, xmm0, $FF;
+
+   movapd xmm3, xmm2;
+   pslldq xmm3, $04;
+
+   pxor xmm2, xmm3;
+   pxor xmm2, xmm1;
+end;
+
+/// <summary>
+///   AES-192 key expansion via AES-NI (Intel schedule for 192-bit keys).
+///   Renamed from donor BuildAsmKey196 (typo for 192).
+/// </summary>
+procedure BuildAsmKey192(Key: PByte; Dest: PLongWord); register;
+// eax: key, edx: dest  /  rcx: key, rdx: dest
+asm
+   xorpd xmm2, xmm2;
+
+   {$IFDEF X64ASM}
+   movupd xmm0, [rcx];
+   movsd xmm2, [rcx + 16];
+   movupd [rdx], xmm0;
+   {$ELSE}
+   movupd xmm0, [eax];
+   movsd xmm2, [eax + 16];
+   movupd [edx], xmm0;
+   {$ENDIF}
+
+   movapd xmm4, xmm2;
+
+   aeskeygenassist xmm1, xmm2, $01;
+   call KeyExpand192;
+
+   shufpd xmm4, xmm0, 0;
+   {$IFDEF X64ASM}
+   movupd [rdx + 16], xmm4;
+   {$ELSE}
+   movupd [edx + 16], xmm4;
+   {$ENDIF}
+   movapd xmm4, xmm0;
+   shufpd xmm4, xmm2, 1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 32], xmm4;
+   {$ELSE}
+   movupd [edx + 32], xmm4;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $02;
+   call KeyExpand192;
+   {$IFDEF X64ASM}
+   movupd [rdx + 48], xmm0;
+   {$ELSE}
+   movupd [edx + 48], xmm0;
+   {$ENDIF}
+   movapd xmm4, xmm2;
+   aeskeygenassist xmm1, xmm2, $04;
+   call KeyExpand192;
+   shufpd xmm4, xmm0, 0;
+   {$IFDEF X64ASM}
+   movupd [rdx + 64], xmm4;
+   {$ELSE}
+   movupd [edx + 64], xmm4;
+   {$ENDIF}
+
+   movapd xmm4, xmm0;
+   shufpd xmm4, xmm2, 1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 80], xmm4;
+   {$ELSE}
+   movupd [edx + 80], xmm4;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $08;
+   call KeyExpand192;
+   {$IFDEF X64ASM}
+   movupd [rdx + 96], xmm0;
+   {$ELSE}
+   movupd [edx + 96], xmm0;
+   {$ENDIF}
+   movapd xmm4, xmm2;
+
+   aeskeygenassist xmm1, xmm2, $10;
+   call KeyExpand192;
+   shufpd xmm4, xmm0, 0;
+   {$IFDEF X64ASM}
+   movupd [rdx + 112], xmm4;
+   {$ELSE}
+   movupd [edx + 112], xmm4;
+   {$ENDIF}
+
+   movapd xmm4, xmm0;
+   shufpd xmm4, xmm2, 1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 128], xmm4;
+   {$ELSE}
+   movupd [edx + 128], xmm4;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $20;
+   call KeyExpand192;
+   {$IFDEF X64ASM}
+   movupd [rdx + 144], xmm0;
+   {$ELSE}
+   movupd [edx + 144], xmm0;
+   {$ENDIF}
+   movapd xmm4, xmm2;
+
+   aeskeygenassist xmm1, xmm2, $40;
+   call KeyExpand192;
+
+   shufpd xmm4, xmm0, 0;
+   {$IFDEF X64ASM}
+   movupd [rdx + 160], xmm4;
+   {$ELSE}
+   movupd [edx + 160], xmm4;
+   {$ENDIF}
+
+   movapd xmm4, xmm0;
+   shufpd xmm4, xmm2, 1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 176], xmm4;
+   {$ELSE}
+   movupd [edx + 176], xmm4;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $80;
+   call KeyExpand192;
+   {$IFDEF X64ASM}
+   movupd [rdx + 192], xmm0;
+   {$ELSE}
+   movupd [edx + 192], xmm0;
+   {$ENDIF}
+end;
+
+// xmm0-xmm2 prefilled; xmm3/xmm4 intermediate.
+procedure KeyExpand256_1; register;
+asm
+   pshufd xmm1, xmm1, $FF;
+   movapd xmm3, xmm0;
+   pslldq xmm3, $04;
+   pxor xmm0, xmm3;
+
+   pslldq xmm3, $04;
+   pxor xmm0, xmm3;
+
+   pslldq xmm3, $04;
+   pxor xmm0, xmm3;
+   pxor xmm0, xmm1;
+end;
+
+procedure KeyExpand256_2; register;
+asm
+   aeskeygenassist xmm3, xmm0, $00;
+   pshufd xmm1, xmm3, $AA;
+   movapd xmm3, xmm2;
+   pslldq  xmm3, $04;
+   pxor xmm2, xmm3;
+   pslldq  xmm3, $04;
+
+   pxor xmm2, xmm3;
+   pslldq  xmm3, $04;
+
+   pxor xmm2, xmm3;
+   pxor xmm2, xmm1;
+end;
+
+procedure BuildAsmKey256(Key: PByte; Dest: PLongWord); register;
+// eax/edx = key/dest  /  rcx/rdx = key/dest
+asm
+   {$IFDEF X64ASM}
+   movupd xmm0, [rcx];
+   movupd xmm2, [rcx + 16];
+
+   movupd [rdx], xmm0;
+   movupd [rdx + 16], xmm2;
+
+   {$ELSE}
+   movupd xmm0, [eax];
+   movupd xmm2, [eax + 16];
+
+   movupd [edx], xmm0;
+   movupd [edx + 16], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $1;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 32], xmm0;
+   {$ELSE}
+   movupd [edx + 32], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 48], xmm2;
+   {$ELSE}
+   movupd [edx + 48], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $2;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 64], xmm0;
+   {$ELSE}
+   movupd [edx + 64], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 80], xmm2;
+   {$ELSE}
+   movupd [edx + 80], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $4;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 96], xmm0;
+   {$ELSE}
+   movupd [edx + 96], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 112], xmm2;
+   {$ELSE}
+   movupd [edx + 112], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $8;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 128], xmm0;
+   {$ELSE}
+   movupd [edx + 128], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 144], xmm2;
+   {$ELSE}
+   movupd [edx + 144], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $10;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 160], xmm0;
+   {$ELSE}
+   movupd [edx + 160], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 176], xmm2;
+   {$ELSE}
+   movupd [edx + 176], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $20;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 192], xmm0;
+   {$ELSE}
+   movupd [edx + 192], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 208], xmm2;
+   {$ELSE}
+   movupd [edx + 208], xmm2;
+   {$ENDIF}
+
+   aeskeygenassist xmm1, xmm2, $40;
+   call KeyExpand256_1;
+   {$IFDEF X64ASM}
+   movupd [rdx + 224], xmm0;
+   {$ELSE}
+   movupd [edx + 224], xmm0;
+   {$ENDIF}
+   call KeyExpand256_2;
+   {$IFDEF X64ASM}
+   movupd [rdx + 240], xmm2;
+   {$ELSE}
+   movupd [edx + 240], xmm2;
+   {$ENDIF}
+end;
+
+/// <summary>
+///   Build inverse (decode) round-key schedule with AESIMC, reverse order for
+///   sequential AESDEC access.
+/// </summary>
+procedure BuildAsmDecodeKey(EncodeKey: PLongWord; DecodeKey: PLongWord; NumRounds: Integer); register;
+// eax/edx/ecx = encode/decode/rounds  /  rcx/rdx/r8 = encode/decode/rounds
+asm
+   {$IFDEF X64ASM}
+   movdqu xmm0, [rcx];
+   lea rdx, [rdx + 8*r8];
+   lea rdx, [rdx + 8*r8];
+   movdqu [rdx], xmm0;
+
+   add rcx, 16;
+   sub rdx, 16;
+   dec r8d;
+
+   @decLoop:
+      movdqu xmm0, [rcx];
+      aesimc xmm0, xmm0;
+      movdqu [rdx], xmm0;
+
+      add rcx, 16;
+      sub rdx, 16;
+   dec r8d;
+   jg @decLoop;
+
+   movdqu xmm0, [rcx];
+   movdqu [rdx], xmm0;
+   {$ELSE}
+   movdqu xmm0, [eax];
+   lea edx, [edx + 8*ecx];
+   lea edx, [edx + 8*ecx];
+   movdqu [edx], xmm0;
+
+   add eax, 16;
+   sub edx, 16;
+   dec ecx;
+
+   @decLoop:
+      movdqu xmm0, [eax];
+      aesimc xmm0, xmm0;
+      movdqu [edx], xmm0;
+
+      add eax, 16;
+      sub edx, 16;
+
+   loop @decLoop;
+
+   movdqu xmm0, [eax];
+   movdqu [edx], xmm0;
+   {$ENDIF}
+end;
+
+procedure AESEncode(Source, Dest: Pointer; NumRounds: Integer; Key: PLongWord); register;
+asm
+   {$IFDEF X64ASM}
+   movupd xmm1, [rcx];
+   movdqa xmm2, [r9];
+   pxor xmm1, xmm2;
+   add r9, 16;
+
+   dec r8d;
+
+   @aesloop:
+     movdqa xmm2, [r9];
+     aesenc xmm1, xmm2;
+     add r9, 16;
+
+     dec r8d;
+   jg @aesloop;
+
+   movdqa xmm2, [r9];
+   aesenclast xmm1, xmm2;
+   movupd [rdx], xmm1;
+   {$ELSE}
+   push edi;
+
+   movupd xmm1, [eax];
+   mov edi, key;
+   movdqa xmm2, [edi];
+   pxor xmm1, xmm2;
+   add edi, 16;
+
+   dec ecx;
+
+   @aesloop:
+     movdqa xmm2, [edi];
+     aesenc xmm1, xmm2;
+     add edi, 16;
+
+     dec ecx;
+   jg @aesloop;
+
+   movdqa xmm2, [edi];
+   aesenclast xmm1, xmm2;
+   movupd [edx], xmm1;
+   pop edi;
+   {$ENDIF}
+end;
+
+procedure AESDecode(Source, Dest: Pointer; NumRounds: Integer; Key: PLongWord); register;
+asm
+   {$IFDEF X64ASM}
+   movupd xmm1, [rcx];
+   movdqa xmm2, [r9];
+   pxor xmm1, xmm2;
+   add r9, 16;
+
+   dec r8d;
+
+   @aesloop:
+     movdqa xmm2, [r9];
+     aesdec xmm1, xmm2;
+     add r9, 16;
+
+     dec r8d;
+   jg @aesloop;
+
+   movdqa xmm2, [r9];
+   aesdeclast xmm1, xmm2;
+   movupd [rdx], xmm1;
+   {$ELSE}
+   push edi;
+
+   movupd xmm1, [eax];
+   mov edi, key;
+   movdqa xmm2, [edi];
+   pxor xmm1, xmm2;
+   add edi, 16;
+
+   dec ecx;
+
+   @aesloop:
+     movdqa xmm2, [edi];
+     aesdec xmm1, xmm2;
+     add edi, 16;
+
+     dec ecx;
+   jg @aesloop;
+
+   movdqa xmm2, [edi];
+   aesdeclast xmm1, xmm2;
+   movupd [edx], xmm1;
+   pop edi;
+   {$ENDIF}
+end;
+
+{$IFEND}
+
 procedure TCipher_Rijndael.DoInit(const Key; Size: Integer);
-{$REGION OldKeyShedule}
-{
-  // Old Rijndael Key Scheduling:
-
-  procedure BuildEncodeKey;
-  const
-    RND_Data: array[0..29] of Byte = (
-      $01, $02, $04, $08, $10, $20, $40, $80, $1B, $36, $6C, $D8, $AB, $4D, $9A,
-      $2F, $5E, $BC, $63, $C6, $97, $35, $6A, $D4, $B3, $7D, $FA, $EF, $C5, $91
-    );
-  var
-    T, R: Integer;
-
-    procedure NextRounds;
-    var
-      J: Integer;
-    begin
-      J := 0;
-      while (J < FRounds - 6) and (R <= FRounds) do
-      begin
-        while (J < FRounds - 6) and (T < Rijndael_Blocks) do
-        begin
-          PUInt32Array(FBuffer)[R * Rijndael_Blocks + T] := K[J];
-          Inc(J);
-          Inc(T);
-        end;
-        if T = Rijndael_Blocks then
-        begin
-          T := 0;
-          Inc(R);
-        end;
-      end;
-    end;
-
-  var
-    RND: PByte;
-    B: PByte;
-    I: Integer;
-  begin
-    R := 0;
-    T := 0;
-    RND := @RND_Data;
-    NextRounds;
-    while R <= FRounds do
-    begin
-      B  := @K;
-      B^ := B^ xor Rijndael_S[0, K[FRounds - 7] shr  8 and $FF] xor RND^; Inc(B);
-      B^ := B^ xor Rijndael_S[0, K[FRounds - 7] shr 16 and $FF];          Inc(B);
-      B^ := B^ xor Rijndael_S[0, K[FRounds - 7] shr 24];                  Inc(B);
-      B^ := B^ xor Rijndael_S[0, K[FRounds - 7] and $FF];
-      Inc(RND);
-      if FRounds = 14 then
-      begin
-        for I := 1 to 7 do
-          K[I] := K[I] xor K[I - 1];
-        B  := @K[4];
-        B^ := B^ xor Rijndael_S[0, K[3] and $FF];         Inc(B);
-        B^ := B^ xor Rijndael_S[0, K[3] shr  8 and $FF];  Inc(B);
-        B^ := B^ xor Rijndael_S[0, K[3] shr 16 and $FF];  Inc(B);
-        B^ := B^ xor Rijndael_S[0, K[3] shr 24];
-        for I := 5 to 7 do
-          K[I] := K[I] xor K[I - 1];
-      end
-      else
-        for I := 1 to FRounds - 7 do
-          K[I] := K[I] xor K[I - 1];
-      NextRounds;
-    end;
-  end;
-
-  procedure BuildDecodeKey;
-  var
-    I: Integer;
-    D: PUInt32;
-  begin
-    D := Pointer(PAnsiChar(FBuffer) + FBufferSize shr 1); // for Pointer Math
-    Move(FBuffer^, D^, FBufferSize shr 1);
-    Inc(D, 4);
-    for I := 0 to FRounds * 4 - 5 do
-    begin
-      D^ :=  Rijndael_Key[D^ and $FF] xor
-            (Rijndael_Key[D^ shr  8 and $FF] shl  8 or Rijndael_Key[D^ shr  8 and $FF] shr 24) xor
-            (Rijndael_Key[D^ shr 16 and $FF] shl 16 or Rijndael_Key[D^ shr 16 and $FF] shr 16) xor
-            (Rijndael_Key[D^ shr 24]         shl 24 or Rijndael_Key[D^ shr 24]          shr 8);
-      Inc(D);
-    end;
-  end; }
-{$ENDREGION}
-
+{$IF defined(X86ASM) or defined(X64ASM)}
+var
+  pBuf: PUInt32Array;
+{$IFEND}
 begin
   if Size <= 16 then
     FRounds := 10
@@ -2943,10 +3385,33 @@ begin
     FRounds := 12
   else
     FRounds := 14;
-  FillChar(FAdditionalBuffer^, 32, 0);
-  Move(Key, FAdditionalBuffer^, Size);
-  BuildEncodeKey(Size);
-  BuildDecodeKey;
+
+  FAESAsmActive := False;
+  {$IF defined(X86ASM) or defined(X64ASM)}
+  // AES-NI key expand only for standard AES key lengths (16/24/32).
+  // Non-standard Rijndael sizes always use pure Pascal.
+  if UseAESAsm and TDEC_CPUSupport.AES and
+     ((Size = 16) or (Size = 24) or (Size = 32)) then
+  begin
+    pBuf := AlignPtr32(FAdditionalBuffer);
+    case Size of
+      16: BuildAsmKey128(@Key, PLongWord(pBuf));
+      24: BuildAsmKey192(@Key, PLongWord(pBuf));
+      32: BuildAsmKey256(@Key, PLongWord(pBuf));
+    end;
+    // Inverse decode schedule via AESIMC (fixed max-round offset).
+    BuildAsmDecodeKey(PLongWord(pBuf),
+      @(pBuf^[Rijndael_Rounds * Rijndael_Blocks]), FRounds);
+    FAESAsmActive := True;
+  end
+  else
+  {$IFEND}
+  begin
+    FillChar(FAdditionalBuffer^, 32, 0);
+    Move(Key, FAdditionalBuffer^, Size);
+    BuildEncodeKey(Size);
+    BuildDecodeKey;
+  end;
 
   inherited;
 end;
@@ -3047,6 +3512,14 @@ var
 begin
   Assert(Size = Context.BlockSize);
 
+  {$IF defined(X86ASM) or defined(X64ASM)}
+  if FAESAsmActive then
+  begin
+    AESEncode(Source, Dest, FRounds, AlignPtr32(FAdditionalBuffer));
+    Exit;
+  end;
+  {$IFEND}
+
   P  := FAdditionalBuffer;
   A1 := PUInt32Array(Source)[0];
   B1 := PUInt32Array(Source)[1];
@@ -3111,6 +3584,15 @@ var
   A1, B1, C1, D1: UInt32;
 begin
   Assert(Size = Context.BlockSize);
+
+  {$IF defined(X86ASM) or defined(X64ASM)}
+  if FAESAsmActive then
+  begin
+    AESDecode(Source, Dest, FRounds,
+      @(PUInt32Array(AlignPtr32(FAdditionalBuffer))^[Rijndael_Rounds * Rijndael_Blocks]));
+    Exit;
+  end;
+  {$IFEND}
 
   P  := Pointer(PByte(FAdditionalBuffer) + FAdditionalBufferSize shr 1 + FRounds * 16); // for Pointer Math
   A1 := PUInt32Array(Source)[0];
@@ -3181,7 +3663,7 @@ begin
   Result.KeySize                     := 16;
   Result.BlockSize                   := Rijndael_Blocks * 4;
   Result.BufferSize                  := Rijndael_Blocks * 4;
-  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2;
+  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2 + $20;
   Result.NeedsAdditionalBufferBackup := False;
   Result.MinRounds                   := 1;
   Result.MaxRounds                   := 1;
@@ -3214,7 +3696,7 @@ begin
   Result.KeySize                     := 24;
   Result.BlockSize                   := Rijndael_Blocks * 4;
   Result.BufferSize                  := Rijndael_Blocks * 4;
-  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2;
+  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2 + $20;
   Result.NeedsAdditionalBufferBackup := False;
   Result.MinRounds                   := 1;
   Result.MaxRounds                   := 1;
@@ -3247,7 +3729,7 @@ begin
   Result.KeySize                     := 32;
   Result.BlockSize                   := Rijndael_Blocks * 4;
   Result.BufferSize                  := Rijndael_Blocks * 4;
-  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2;
+  Result.AdditionalBufferSize        := (Rijndael_Rounds + 1) * Rijndael_Blocks * SizeOf(UInt32) * 2 + $20;
   Result.NeedsAdditionalBufferBackup := False;
   Result.MinRounds                   := 1;
   Result.MaxRounds                   := 1;
@@ -7941,6 +8423,15 @@ initialization
 
   // Prefer pure Pascal until SIMD kernels are proven across targets.
   TCipher_ChaCha20.CpuMode := cmPas;
+
+  // AES-NI: auto-enable only when ASM path is compiled and CPU reports AES-NI.
+  // Never required for correctness; override with TCipher_Rijndael.UseAESAsm := False.
+  TCipher_Rijndael.UseAESAsm :=
+    {$IF defined(X86ASM) or defined(X64ASM)}
+    TDEC_CPUSupport.AES
+    {$ELSE}
+    False
+    {$IFEND};
 
   {$IFNDEF ManualRegisterCipherClasses}
   TCipher_Null.RegisterClass(TDECCipher.ClassList);
