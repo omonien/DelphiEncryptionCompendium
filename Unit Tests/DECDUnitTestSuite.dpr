@@ -1,4 +1,4 @@
-program DECDUnitTestSuite;
+﻿program DECDUnitTestSuite;
 
 {
 
@@ -43,7 +43,8 @@ uses
   TestDECZIPHelper in 'Tests\TestDECZIPHelper.pas',
   TestDECCipherPaddings in 'Tests\TestDECCipherPaddings.pas',
   TestDECCipherModesCCM in 'Tests\TestDECCipherModesCCM.pas',
-  AuthenticatedCiphersCommonTestData in 'Tests\AuthenticatedCiphersCommonTestData.pas';
+  AuthenticatedCiphersCommonTestData in 'Tests\AuthenticatedCiphersCommonTestData.pas',
+  TestDECChaChaPoly1305 in 'Tests\TestDECChaChaPoly1305.pas';
 
 {$R *.RES}
 

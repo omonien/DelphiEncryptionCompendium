@@ -732,7 +732,9 @@ function TDECFormattedCipher.EncodeBytes(const Source: TBytes): TBytes;
     if Length(Result) > 0 then
       Encode(Source[0], Result[0], Length(Source))
     else
-      if (FMode = cmGCM) or (FMode = cmCCM) then
+      // AAD-only authenticated modes still need a zero-length encode pass so the
+      // auth object can absorb AAD (tag finalized later in Done).
+      if (FMode = cmGCM) or (FMode = cmCCM) or (FMode = cmPoly1305) then
         EncodeAuthenticated(nil, nil, 0);
   end;
 
@@ -755,7 +757,7 @@ begin
     Decode(Source[0], Result[0], Length(Source));
   end
   else
-    if (FMode = cmGCM) or (FMode = cmCCM) then
+    if (FMode = cmGCM) or (FMode = cmCCM) or (FMode = cmPoly1305) then
       DecodeAuthenticated(nil, nil, 0);
 
   if not (FPaddingClass = nil) then
@@ -879,7 +881,9 @@ begin
     end;
   end
   else
-    if (FMode = cmGCM) then
+    // Empty GCM and Poly1305 streams still need one zero-length pass so AAD
+    // is absorbed. The tag is finalized later in Done.
+    if (FMode = cmGCM) or (FMode = cmPoly1305) then
     begin
       Buffer := nil;
       CipherProc(Buffer, Buffer, 0);
