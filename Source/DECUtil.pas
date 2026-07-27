@@ -1,4 +1,4 @@
-{*****************************************************************************
+﻿{*****************************************************************************
   The DEC team (see file NOTICE.txt) licenses this file
   to you under the Apache License, Version 2.0 (the
   "License"); you may not use this file except in compliance
@@ -280,6 +280,18 @@ function StringToBytes(const Str: string): TBytes; inline;
 ///   true, if both contain exactly the same data
 /// </returns>
 function IsEqual(const a, b : TBytes ):Boolean;
+
+/// <summary>
+///   Returns a pointer aligned up to the next 32-byte boundary (or A if already
+///   aligned). Used by SIMD cipher kernels that require aligned state buffers.
+/// </summary>
+/// <param name="A">
+///   Pointer to an input memory block (must remain valid for the returned span)
+/// </param>
+/// <returns>
+///   A, or the next 32-byte-aligned address within the same allocation
+/// </returns>
+function AlignPtr32(A: Pointer): Pointer;
 
 /// <summary>
 ///   Calculates the shannon entropy of the byte array. AI generated.
@@ -706,6 +718,13 @@ begin
       Result := CompareMem(@a[0], @b[0], length(a))
     else
       Result := true;
+end;
+
+function AlignPtr32(A: Pointer): Pointer;
+begin
+  Result := A;
+  if (NativeUInt(A) and $1F) <> 0 then
+    Result := Pointer(NativeUInt(Result) + $20 - (NativeUInt(Result) and $1F));
 end;
 
 function ShannonEntropy(const ABytes: TBytes): Double;

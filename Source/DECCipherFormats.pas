@@ -1,4 +1,4 @@
-{*****************************************************************************
+﻿{*****************************************************************************
   The DEC team (see file NOTICE.txt) licenses this file
   to you under the Apache License, Version 2.0 (the
   "License"); you may not use this file except in compliance
@@ -732,7 +732,9 @@ function TDECFormattedCipher.EncodeBytes(const Source: TBytes): TBytes;
     if Length(Result) > 0 then
       Encode(Source[0], Result[0], Length(Source))
     else
-      if (FMode = cmGCM) then
+      // AAD-only authenticated modes still need a zero-length encode pass so the
+      // auth object can absorb AAD (tag finalized later in Done).
+      if IsAuthenticatedBlockMode(FMode) then
         EncodeGCM(nil, nil, 0);
   end;
 
@@ -749,13 +751,13 @@ begin
 
   if Length(Result) > 0 then
   begin
-    if (FMode = cmGCM) then
+    if IsAuthenticatedBlockMode(FMode) then
       SetLength(Result, Length(Source));
 
     Decode(Source[0], Result[0], Length(Source));
   end
   else
-    if (FMode = cmGCM) then
+    if IsAuthenticatedBlockMode(FMode) then
       DecodeGCM(nil, nil, 0);
 
   if not (FPaddingClass = nil) then
@@ -805,7 +807,7 @@ begin
         SetLength(Buffer, DataSize);
 
       outBuffer := Buffer;
-      if (FMode = cmGCM) then
+      if IsAuthenticatedBlockMode(FMode) then
         SetLength(outBuffer, Length(Buffer));
 
       while (DataSize > 0) or doStartOnlyPadding do
@@ -871,7 +873,7 @@ begin
     end;
   end
   else
-    if (FMode = cmGCM) then
+    if IsAuthenticatedBlockMode(FMode) then
     begin
       Buffer := nil;
       CipherProc(Buffer, Buffer, 0);
