@@ -3207,18 +3207,15 @@ asm
    movupd [edx + 208], xmm2;
    {$ENDIF}
 
+   // AES-256 has Nr=14 → 15 round keys (offsets 0..224). The final expansion
+   // only produces the last encode key at +224; a second half-key at +240 would
+   // be out of range and collide with the inverse schedule that follows.
    aeskeygenassist xmm1, xmm2, $40;
    call KeyExpand256_1;
    {$IFDEF X64ASM}
    movupd [rdx + 224], xmm0;
    {$ELSE}
    movupd [edx + 224], xmm0;
-   {$ENDIF}
-   call KeyExpand256_2;
-   {$IFDEF X64ASM}
-   movupd [rdx + 240], xmm2;
-   {$ELSE}
-   movupd [edx + 240], xmm2;
    {$ENDIF}
 end;
 
@@ -3399,9 +3396,11 @@ begin
       24: BuildAsmKey192(@Key, PLongWord(pBuf));
       32: BuildAsmKey256(@Key, PLongWord(pBuf));
     end;
-    // Inverse decode schedule via AESIMC (fixed max-round offset).
+    // Inverse decode schedule via AESIMC, placed immediately after the
+    // (FRounds+1) encode round keys so AES-256's 240-byte encode schedule
+    // does not overlap the decode region (was wrongly using max Rijndael_Rounds).
     BuildAsmDecodeKey(PLongWord(pBuf),
-      @(pBuf^[Rijndael_Rounds * Rijndael_Blocks]), FRounds);
+      @(pBuf^[(FRounds + 1) * Rijndael_Blocks]), FRounds);
     FAESAsmActive := True;
   end
   else
@@ -3589,7 +3588,7 @@ begin
   if FAESAsmActive then
   begin
     AESDecode(Source, Dest, FRounds,
-      @(PUInt32Array(AlignPtr32(FAdditionalBuffer))^[Rijndael_Rounds * Rijndael_Blocks]));
+      @(PUInt32Array(AlignPtr32(FAdditionalBuffer))^[(FRounds + 1) * Rijndael_Blocks]));
     Exit;
   end;
   {$IFEND}
