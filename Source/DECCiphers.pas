@@ -7017,6 +7017,10 @@ begin
      // special care in case of poly1305:
      if FMode = cmPoly1305 then
      begin
+          // Temporarily clear FBufferSize so DoEncode runs as a raw keystream
+          // generator for the one-time Poly1305 key (RFC 7539 §2.6). Restore
+          // Context.BufferSize afterwards so Encode/Decode keep a valid block
+          // size if the mode is switched or buffer paths are exercised.
           FBufferSize := 0;
           // according to RFC7539 (chapter 2.6) we create the R and S (the IV vector) value as:
           // block counter is 0 key and nonce (96 or 64 bits)
@@ -7037,6 +7041,8 @@ begin
           // dismiss the remaining block ->
           // first block was for the polynom... increment block number for the rest
           fChaChaIdx := sizeof(TChaChaMtx);
+
+          FBufferSize := Context.BufferSize;
 
           // setup complete -> We are ready to encrypt...
      end
