@@ -283,6 +283,21 @@ end;
 
 {$IFDEF X86ASM}
 
+// Win32: XMM6/XMM7 are callee-saved when the compiler uses them; AVX Poly1305
+// clobbers them via poly1305_block_avx2_ctx, so save/restore around each call.
+procedure StoreXMM( pXMM : PUInt64 ); register; {$IFDEF FPC} assembler; {$ENDIF}
+asm
+   // register calling convention: first parameter in EAX
+   movups dqword ptr [eax], xmm6
+   movups dqword ptr [eax + 16], xmm7
+end;
+
+procedure RestoreXMM( pXMM : PUInt64 ); register; {$IFDEF FPC} assembler; {$ENDIF}
+asm
+   movups xmm6, dqword ptr [eax]
+   movups xmm7, dqword ptr [eax + 16]
+end;
+
 procedure poly1305_block_avx2_ctx(ctx : TPoly1305.PPoly1305CTX; t : TPoly1305.PStateAVXArr); {$IFDEF FPC} assembler; {$ENDIF}
 asm
    push ebp;
@@ -720,13 +735,9 @@ begin
           end;
 
           Split26(PUint64(@FData[0])^, PUint64(@FData[8])^, @t[0]);
-          {$IFDEF x64}
-          StoreXMM(FXMMMem)
-          {$ENDIF}
+          StoreXMM(FXMMMem);
           poly1305_block_avx2_ctx(FAVXCtx, @t[0]);
-          {$IFDEF x64}
           RestoreXMM(FXMMMem);
-          {$ENDIF}
           FNum := 0;
      end;
 
@@ -826,9 +837,7 @@ var lens : Array[0..1] of UInt64;
     t : TStateAVXArr;
 begin
      // pad the last block with 0
-     {$IFDEF x64}
      StoreXMM(FXMMMem);
-     {$ENDIF}
      if FNum > 0 then
      begin
           FData[FNum] := 0;
@@ -853,10 +862,7 @@ begin
      Split26(lens[0], lens[1], @t[0]);
      t[4] := t[4] + cShl24;
      poly1305_block_avx2_ctx(FAVXCtx, @t[0]);
-     {$IFDEF x64}
      RestoreXMM(FXMMMem);
-     {$ENDIF}
-
      FinalizeAVX;
 end;
 {$ENDIF}
@@ -1114,11 +1120,7 @@ var num : integer;
     t : TStateAVXArr;
 begin
      num := FNum;
-
-     {$IFDEF x64}
      StoreXMM(FXMMMem);
-     {$ENDIF}
-
      if num <> 0 then
      begin
           rem := POLY1305_BLOCK_SIZE - num;
@@ -1137,10 +1139,7 @@ begin
                // Still not enough data to process a block.
                move( pData^, FData[num], size );
                inc(FNum, size);
-               {$IFDEF x64}
-               RestoreXMM(FXMMMem);
-               {$endif}
-
+     RestoreXMM(FXMMMem);
                exit;
           end;
      end;
@@ -1154,11 +1153,7 @@ begin
           inc(PByte(pData), POLY1305_BLOCK_SIZE);
           dec(size, POLY1305_BLOCK_SIZE);
      end;
-
-     {$IFDEF x64}
      RestoreXMM(FXMMMem);
-     {$ENDIF}
-
      if size > 0 then
         Move( pData^, FData[0], size );
 

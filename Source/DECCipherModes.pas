@@ -751,17 +751,25 @@ begin
 
   if FMode in [TCipherMode.cmGCM, TCipherMode.cmCCM, TCipherMode.cmPoly1305] then
   begin
-    if (Context.BlockSize = 16) then
+    // Poly1305 AEAD is stream-cipher only (ChaCha20 / XChaCha20, BlockSize=1).
+    // Pairing it with 128-bit block ciphers would pass DoEncode into the MAC
+    // object for both directions and break decrypt — refuse that combination.
+    if (FMode = TCipherMode.cmPoly1305) then
+    begin
+      if (Context.BlockSize < 16) then
+        FAuthObj := TPoly1305.Create
+      else
+        raise EDECCipherException.CreateResFmt(@sInvalidBlockSize,
+                                               [8, GetEnumName(TypeInfo(TCipherMode),
+                                               Integer(FMode))]);
+    end
+    else if (Context.BlockSize = 16) then
     begin
       case FMode of
-        cmGCM:      FAuthObj := TGCM.Create;
-        cmCCM:      FAuthObj := TCCM.Create;
-        cmPoly1305: FAuthObj := TPoly1305.Create;
+        cmGCM: FAuthObj := TGCM.Create;
+        cmCCM: FAuthObj := TCCM.Create;
       end;
     end
-    else if (Context.BlockSize < 16) and (FMode = TCipherMode.cmPoly1305) then
-      // ChaCha20 / XChaCha20 stream ciphers (BlockSize = 1) with Poly1305 AEAD
-      FAuthObj := TPoly1305.Create
     else
       // GCM and CCM require a cipher with 128 bit block size
       raise EDECCipherException.CreateResFmt(@sInvalidBlockSize,
