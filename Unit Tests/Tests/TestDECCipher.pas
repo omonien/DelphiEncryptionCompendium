@@ -1,4 +1,4 @@
-{*****************************************************************************
+ï»¿{*****************************************************************************
   The DEC team (see file NOTICE.txt) licenses this file
   to you under the Apache License, Version 2.0 (the
   "License"); you may not use this file except in compliance
@@ -4324,8 +4324,8 @@ begin
 { TODO :
 Das Problem ist hier: dass wir zu low level testen, da die bisherigen Textvektoren
 ja immer von einem bestimmten CipherModus ausgehen, und nicht die
-einzelnen DoEncode/DoDecode primitive. Diese sind später zu testen, wenn
-wir die bisherigen Vektoren testen können. Dann können wir die nötigen
+einzelnen DoEncode/DoDecode primitive. Diese sind spï¿½ter zu testen, wenn
+wir die bisherigen Vektoren testen kï¿½nnen. Dann kï¿½nnen wir die nï¿½tigen
 Daten synthetisieren. }
   for Data in FTestData do
   begin
@@ -4349,8 +4349,8 @@ begin
 { TODO :
 Das Problem ist hier: dass wir zu low level testen, da die bisherigen Testvektoren
 ja immer von einem bestimmten CipherModus ausgehen, und nicht die
-einzelnen DoEncode/DoDecode primitive. Diese sind später zu testen, wenn
-wir die bisherigen Vektoren testen können. Dann können wir die nötigen
+einzelnen DoEncode/DoDecode primitive. Diese sind spï¿½ter zu testen, wenn
+wir die bisherigen Vektoren testen kï¿½nnen. Dann kï¿½nnen wir die nï¿½tigen
 Daten synthetisieren. }
   for Data in FTestData do
   begin
@@ -4798,7 +4798,8 @@ begin
   CheckEquals(  32,  ReturnValue.KeySize);
   CheckEquals(  16,  ReturnValue.BlockSize);
   CheckEquals(  16,  ReturnValue.BufferSize);
-  CheckEquals( 480,  ReturnValue.AdditionalBufferSize);
+  // 480 schedule halves + $20 AES-NI AlignPtr32 spare
+  CheckEquals( 512,  ReturnValue.AdditionalBufferSize);
   CheckEquals(   1,  ReturnValue.MinRounds);
   CheckEquals(   1,  ReturnValue.MaxRounds);
   CheckEquals(false, ReturnValue.NeedsAdditionalBufferBackup);
@@ -4891,7 +4892,8 @@ begin
   CheckEquals(  32,  ReturnValue.KeySize);
   CheckEquals(  16,  ReturnValue.BlockSize);
   CheckEquals(  16,  ReturnValue.BufferSize);
-  CheckEquals( 480,  ReturnValue.AdditionalBufferSize);
+  // 480 schedule halves + $20 AES-NI AlignPtr32 spare
+  CheckEquals( 512,  ReturnValue.AdditionalBufferSize);
   CheckEquals(   1,  ReturnValue.MinRounds);
   CheckEquals(   1,  ReturnValue.MaxRounds);
   CheckEquals(false, ReturnValue.NeedsAdditionalBufferBackup);
@@ -5009,7 +5011,7 @@ begin
   CheckEquals(  16,  ReturnValue.KeySize);
   CheckEquals(  16,  ReturnValue.BlockSize);
   CheckEquals(  16,  ReturnValue.BufferSize);
-  CheckEquals( 480,  ReturnValue.AdditionalBufferSize);
+  CheckEquals( 512,  ReturnValue.AdditionalBufferSize);
   CheckEquals(   1,  ReturnValue.MinRounds);
   CheckEquals(   1,  ReturnValue.MaxRounds);
   CheckEquals(false, ReturnValue.NeedsAdditionalBufferBackup);
@@ -5124,7 +5126,7 @@ begin
   CheckEquals(  24,  ReturnValue.KeySize);
   CheckEquals(  16,  ReturnValue.BlockSize);
   CheckEquals(  16,  ReturnValue.BufferSize);
-  CheckEquals( 480,  ReturnValue.AdditionalBufferSize);
+  CheckEquals( 512,  ReturnValue.AdditionalBufferSize);
   CheckEquals(   1,  ReturnValue.MinRounds);
   CheckEquals(   1,  ReturnValue.MaxRounds);
   CheckEquals(false, ReturnValue.NeedsAdditionalBufferBackup);
@@ -5241,7 +5243,7 @@ begin
   CheckEquals(  32,  ReturnValue.KeySize);
   CheckEquals(  16,  ReturnValue.BlockSize);
   CheckEquals(  16,  ReturnValue.BufferSize);
-  CheckEquals( 480,  ReturnValue.AdditionalBufferSize);
+  CheckEquals( 512,  ReturnValue.AdditionalBufferSize);
   CheckEquals(   1,  ReturnValue.MinRounds);
   CheckEquals(   1,  ReturnValue.MaxRounds);
   CheckEquals(false, ReturnValue.NeedsAdditionalBufferBackup);
@@ -5340,7 +5342,7 @@ begin
   CheckEquals(  32,  ReturnValue.KeySize);
   CheckEquals(  16,  ReturnValue.BlockSize);
   CheckEquals(  16,  ReturnValue.BufferSize);
-  CheckEquals( 480,  ReturnValue.AdditionalBufferSize);
+  CheckEquals( 512,  ReturnValue.AdditionalBufferSize);
   CheckEquals(   1,  ReturnValue.MinRounds);
   CheckEquals(   1,  ReturnValue.MaxRounds);
   CheckEquals(false, ReturnValue.NeedsAdditionalBufferBackup);
