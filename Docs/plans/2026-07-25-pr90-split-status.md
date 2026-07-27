@@ -1,6 +1,6 @@
 # PR #90 split — fork status (A / B / C)
 
-**Status date:** 2026-07-25  
+**Status date:** 2026-07-27  
 **Audience:** maintainers working on the `omonien` fork  
 **Policy:** work stays on the **fork only** until earlier open PRs against `MHumm/development` are reviewed. **Do not open A/B/C against upstream yet** unless that policy changes.
 
@@ -19,11 +19,14 @@ Branch ancestry alone shows *what* is stacked. This file records *intent*, *orde
 ## Package stack (fork)
 
 ```
-origin/development
+fork/development  (== origin/development)
  └── package/aead-architecture     (A)  AEAD FAuthObj + multi-call GCM
       └── package/chacha-poly1305  (B)  ChaCha20 / XChaCha20 / Poly1305
            └── package/aes-ni      (C)  AES-NI with mandatory pure-Pascal fallback
 ```
+
+**Linear ancestry (2026-07-27):** restacked so B is a descendant of A and C of B
+(previously three parallel cherry-picks with identical content but conflicting GitHub merges).
 
 | Package | Branch | Fork PR (internal) | Detail plan |
 |---------|--------|--------------------|-------------|
@@ -32,6 +35,20 @@ origin/development
 | **C** AES-NI | `package/aes-ni` | [omonien#7](https://github.com/omonien/DelphiEncryptionCompendium/pull/7) | [2026-07-25-aes-ni.md](./2026-07-25-aes-ni.md) |
 
 Fork PRs #5–#7 are for **tracking / internal review** on the fork. They are not a substitute for future PRs into `MHumm/DelphiEncryptionCompendium`.
+
+---
+
+## Bugbot / Augment findings — addressed 2026-07-27
+
+| Package | Finding | Resolution |
+|---------|---------|------------|
+| **A** | Mid-stream AAD change broke GCM tag | `SetDataToAuthenticate` rejects after AAD absorbed / after `Done` |
+| **A** | Tag bit length > 128 over-read 16-byte GHASH tag | Cap at 1..128 bits (`EDECAuthLengthException`) + defensive `Move` |
+| **A** | `EncodeCCM` forwarded to `EncodeGCM` (override coupling) | Both call `FAuthObj.Encode/Decode` independently |
+| **B** | Poly1305 + block cipher decrypt used `DoEncode` only | **Stream-only:** `cmPoly1305` requires `BlockSize < 16` (ChaCha); AES rejected |
+| **B** | Poly init left `FBufferSize = 0` | Restore `Context.BufferSize` after one-time Poly key derivation |
+| **B** | Win32 AVX Poly clobbered XMM6/7 | `StoreXMM`/`RestoreXMM` on X86ASM as well as X64 |
+| **C** | AES-256 NI encode key overwritten by decode schedule | Last encode key only at +224; decode at `(FRounds+1)*Blocks`; matching `AESDecode` |
 
 ---
 
@@ -52,31 +69,30 @@ Target base for each: **`MHumm/development`** (not `master`), after any prerequi
 | Item | Role |
 |------|------|
 | [PR #90](https://github.com/MHumm/DelphiEncryptionCompendium/pull/90) | **Donor / reference only** — do not merge as a single unit |
-| GCM multi-chunk (fork `pr-fix-gcm-multichunk` / upstream PR #99 if still open) | Semantics **absorbed into A**; if #99 merges first, expect a small GCM-file conflict when landing A |
-| Older fork cleanup branches (`pr-gitignore`, `pr-dunitx-migration`, Keccak/SHA3 fixes, `docs/style-guide`, …) | Independent of A/B/C; leave until Markus finishes those reviews |
-| Residual Keccak unit failures on `development` | Pre-existing; not introduced by A/B/C |
+| GCM multi-chunk (upstream PR #99 if still open) | Semantics **absorbed into A**; if #99 merges first, expect a small GCM-file conflict when landing A |
+| Older fork cleanup branches / upstream #96–#103 | Independent of A/B/C; leave until Markus finishes those reviews |
+| Residual Keccak unit failures | Pre-existing on `development`; not introduced by A/B/C |
 
 ---
 
 ## One-line package summaries
 
 - **A:** One `FAuthObj` for authenticated modes; GCM multi-call + `Done` lifecycle; public `IDECAuthenticatedCipher` unchanged; no ChaCha.
-- **B:** ChaCha20 / XChaCha20 / Poly1305 on A’s lifecycle; AEAD opt-in (`cmPoly1305`); portable PAS default for SIMD.
+- **B:** ChaCha20 / XChaCha20 / Poly1305 on A's lifecycle; AEAD opt-in (`cmPoly1305`); stream-cipher only; portable PAS default for SIMD.
 - **C:** AES-NI on x86/x64 only when compiled and CPU supports it; **pure Pascal always remains**; no ARM Crypto Extensions yet.
 
 ---
 
-## Verification snapshot (at package completion)
+## Verification snapshot (2026-07-27, after Bugbot fixes)
 
-Delphi 13, Win32 Console DUnit (`DECDUnitTestSuite`), run from `Compiled/BIN_IDE_Win32_Console`:
+Delphi 13, Win32 Console DUnit (`DECDUnitTestSuite`), from `Compiled/BIN_IDE_Win32_Console`:
 
-| After | Notable green suites |
-|-------|----------------------|
-| A | GCM multi-chunk + Done lifecycle; CCM regression |
-| B | + ChaCha20Poly1305 suite; GCM/CCM still green |
-| C | + AES-NI FIPS KATs and PAS↔AES-NI match; ChaCha/GCM/CCM still green |
-
-Known reds on full suite at that time: pre-existing **Keccak** vector issues only (separate fix PRs).
+| Suite | Result |
+|-------|--------|
+| TestTDECGCM | **21/21** green (incl. AAD lock + tag-length + multi-chunk + Done lifecycle) |
+| TestChaCha20Poly1305 | **12/12** green |
+| TestAESNI | **7/7** green (FIPS-197 PAS + PAS↔AES-NI) |
+| Full suite known reds | pre-existing **Keccak** only (separate upstream fix PRs) |
 
 ---
 
