@@ -179,6 +179,8 @@
         <DCCReference Include="DECCipherPaddings.pas"/>
         <DCCReference Include="DECCipherModesCCM.pas"/>
         <DCCReference Include="DECAuthenticatedCipherModesBase.pas"/>
+        <DCCReference Include="DECCipherModesPoly1305.pas"/>
+        <DCCReference Include="DECCPUSupport.pas"/>
         <None Include="DECHash.asm86.inc"/>
         <None Include="DECOptions.inc"/>
         <None Include="BuildAll.cmd"/>

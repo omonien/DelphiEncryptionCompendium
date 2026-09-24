@@ -1,4 +1,4 @@
-{*****************************************************************************
+﻿{*****************************************************************************
   The DEC team (see file NOTICE.txt) licenses this file
   to you under the Apache License, Version 2.0 (the
   "License"); you may not use this file except in compliance
@@ -183,7 +183,8 @@ type
     cmCFSx,   // CFS on Blocksize bytes
     cmECBx,   // Electronic Code Book
     cmGCM,    // Galois Counter Mode
-    cmCCM     // Counter with CBC-MAC Mode
+    cmCCM,    // Counter with CBC-MAC Mode
+    cmPoly1305 // Poly1305 AEAD (typically ChaCha20-Poly1305 / XChaCha20-Poly1305)
     {$IFDEF DEC3_CMCTS}
     ,cmCTS3   // double CBC, with less secure padding of truncated final block
               // for DEC 3.0 compatibility only (see DECOptions.inc)
@@ -900,7 +901,7 @@ end;
 
 function IsAuthenticatedBlockMode(BlockMode: TCipherMode): Boolean;
 begin
-  Result := BlockMode = cmGCM;
+  Result := BlockMode in [cmGCM, cmCCM, cmPoly1305];
 end;
 
 { TDECCipher }
@@ -1055,7 +1056,7 @@ begin
   if (Size > Context.KeySize) and (not (ctNull in Context.CipherType)) then
     raise EDECCipherException.CreateRes(@sKeyMaterialTooLarge);
 
-  if (FInitVectorSize > FBufferSize) and (not (FMode = cmGCM)) then
+  if (FInitVectorSize > FBufferSize) and (not (FMode in [cmGCM, cmPoly1305])) then
     raise EDECCipherException.CreateRes(@sIVMaterialTooLarge);
 
   DoInit(Key, Size);
@@ -1077,8 +1078,16 @@ begin
       // Restore backup fo FBuffer
       Move(FAdditionalBufferBackup^, FAdditionalBuffer^, FAdditionalBufferSize);
   end
-  else
-    Move(IVector, FInitializationVector^, IVectorSize);
+  else if IVectorSize > 0 then
+  begin
+    // cmPoly1305 may pass IVs larger than FBufferSize (e.g. XChaCha 24-byte
+    // nonce). Full IV is available via OriginalInitVector in OnAfter; only copy
+    // what fits into the internal IV buffer.
+    if IVectorSize > FBufferSize then
+      Move(IVector, FInitializationVector^, FBufferSize)
+    else
+      Move(IVector, FInitializationVector^, IVectorSize);
+  end;
 
   OnAfterInitVectorInitialization(OriginalInitVector);
 
