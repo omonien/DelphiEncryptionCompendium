@@ -21,6 +21,7 @@ unit TestDECAESNI;
 interface
 
 {$INCLUDE TestDefines.inc}
+{$INCLUDE ..\..\Source\DECOptions.inc}
 
 uses
   System.SysUtils, System.Classes,
@@ -168,17 +169,25 @@ begin
 end;
 
 procedure TestAESNI.TestUseAESAsmDefaultMatchesCPU;
+var
+  LPrev: Boolean;
 begin
-  // Re-apply unit-init rule and verify.
-  {$IF defined(X86ASM) or defined(X64ASM)}
-  TCipher_Rijndael.UseAESAsm := TDEC_CPUSupport.AES;
-  CheckEquals(True, TDEC_CPUSupport.AES = TCipher_Rijndael.UseAESAsm,
-    'UseAESAsm should follow TDEC_CPUSupport.AES when ASM is compiled');
-  {$ELSE}
-  TCipher_Rijndael.UseAESAsm := False;
-  CheckEquals(False, TCipher_Rijndael.UseAESAsm,
-    'UseAESAsm must be False when ASM path is not compiled');
-  {$IFEND}
+  // DECOptions.inc is included above so X86ASM/X64ASM match DECCiphers.pas.
+  // Restore the previous flag so later fixtures keep the unit-init default.
+  LPrev := TCipher_Rijndael.UseAESAsm;
+  try
+    {$IF defined(X86ASM) or defined(X64ASM)}
+    TCipher_Rijndael.UseAESAsm := TDEC_CPUSupport.AES;
+    CheckEquals(TDEC_CPUSupport.AES, TCipher_Rijndael.UseAESAsm,
+      'UseAESAsm should follow TDEC_CPUSupport.AES when ASM is compiled');
+    {$ELSE}
+    TCipher_Rijndael.UseAESAsm := False;
+    CheckEquals(False, TCipher_Rijndael.UseAESAsm,
+      'UseAESAsm must be False when the ASM path is not compiled');
+    {$IFEND}
+  finally
+    TCipher_Rijndael.UseAESAsm := LPrev;
+  end;
 end;
 
 initialization

@@ -2862,11 +2862,11 @@ end;
 // ###########################################
 // #### AES-NI assembler (Intel AES whitepaper)
 // #### https://www.intel.com/content/dam/develop/external/us/en/documents/aes-wp-2012-09-22-v01-165683.pdf
-// #### Only compiled when X86ASM or X64ASM is defined (off under PUREPASCAL/NO_ASM/FPC).
+// #### Compiled only when X86ASM or X64ASM is set (Intel targets, and not PUREPASCAL/NO_ASM).
 // ###########################################
 
 // Assumes registers preloaded — only call from BuildAsmKey128.
-procedure KeyExpand128; register;
+procedure KeyExpand128; register; {$IFDEF FPC} assembler; {$ENDIF}
 asm
    pshufd xmm2, xmm2, $ff;
    movapd xmm3, xmm1;
@@ -2888,9 +2888,14 @@ asm
    {$ENDIF}
 end;
 
-procedure BuildAsmKey128(Key: PByte; Dest: PLongWord); register;
+procedure BuildAsmKey128(Key: PByte; Dest: PLongWord); register; {$IFDEF FPC} assembler; {$ENDIF}
 // eax: key, edx: dest  /  rcx: key, rdx: dest
 asm
+   {$IF defined(X64ASM) and defined(UNIX)}
+   // System V x64: RDI, RSI. Body below uses the Win64 RCX, RDX layout.
+   mov rdx, rsi
+   mov rcx, rdi
+   {$IFEND}
    xorpd xmm2, xmm2;
    {$IFDEF X64ASM}
    movdqu xmm1, [rcx];
@@ -2925,7 +2930,7 @@ asm
 end;
 
 // Only call from BuildAsmKey192 — assumes xmm0/xmm1/xmm2 preloaded.
-procedure KeyExpand192; register;
+procedure KeyExpand192; register; {$IFDEF FPC} assembler; {$ENDIF}
 asm
    pshufd xmm1, xmm1, $55;
    movapd xmm3, xmm0;
@@ -2952,9 +2957,14 @@ end;
 ///   AES-192 key expansion via AES-NI (Intel schedule for 192-bit keys).
 ///   Renamed from donor BuildAsmKey196 (typo for 192).
 /// </summary>
-procedure BuildAsmKey192(Key: PByte; Dest: PLongWord); register;
+procedure BuildAsmKey192(Key: PByte; Dest: PLongWord); register; {$IFDEF FPC} assembler; {$ENDIF}
 // eax: key, edx: dest  /  rcx: key, rdx: dest
 asm
+   {$IF defined(X64ASM) and defined(UNIX)}
+   // System V x64: RDI, RSI. Body below uses the Win64 RCX, RDX layout.
+   mov rdx, rsi
+   mov rcx, rdi
+   {$IFEND}
    xorpd xmm2, xmm2;
 
    {$IFDEF X64ASM}
@@ -3074,7 +3084,7 @@ asm
 end;
 
 // xmm0-xmm2 prefilled; xmm3/xmm4 intermediate.
-procedure KeyExpand256_1; register;
+procedure KeyExpand256_1; register; {$IFDEF FPC} assembler; {$ENDIF}
 asm
    pshufd xmm1, xmm1, $FF;
    movapd xmm3, xmm0;
@@ -3089,7 +3099,7 @@ asm
    pxor xmm0, xmm1;
 end;
 
-procedure KeyExpand256_2; register;
+procedure KeyExpand256_2; register; {$IFDEF FPC} assembler; {$ENDIF}
 asm
    aeskeygenassist xmm3, xmm0, $00;
    pshufd xmm1, xmm3, $AA;
@@ -3105,9 +3115,14 @@ asm
    pxor xmm2, xmm1;
 end;
 
-procedure BuildAsmKey256(Key: PByte; Dest: PLongWord); register;
+procedure BuildAsmKey256(Key: PByte; Dest: PLongWord); register; {$IFDEF FPC} assembler; {$ENDIF}
 // eax/edx = key/dest  /  rcx/rdx = key/dest
 asm
+   {$IF defined(X64ASM) and defined(UNIX)}
+   // System V x64: RDI, RSI. Body below uses the Win64 RCX, RDX layout.
+   mov rdx, rsi
+   mov rcx, rdi
+   {$IFEND}
    {$IFDEF X64ASM}
    movupd xmm0, [rcx];
    movupd xmm2, [rcx + 16];
@@ -3223,9 +3238,15 @@ end;
 ///   Build inverse (decode) round-key schedule with AESIMC, reverse order for
 ///   sequential AESDEC access.
 /// </summary>
-procedure BuildAsmDecodeKey(EncodeKey: PLongWord; DecodeKey: PLongWord; NumRounds: Integer); register;
+procedure BuildAsmDecodeKey(EncodeKey: PLongWord; DecodeKey: PLongWord; NumRounds: Integer); register; {$IFDEF FPC} assembler; {$ENDIF}
 // eax/edx/ecx = encode/decode/rounds  /  rcx/rdx/r8 = encode/decode/rounds
 asm
+   {$IF defined(X64ASM) and defined(UNIX)}
+   // System V x64: RDI, RSI, RDX. Body below uses Win64 RCX, RDX, R8.
+   mov r8, rdx
+   mov rdx, rsi
+   mov rcx, rdi
+   {$IFEND}
    {$IFDEF X64ASM}
    movdqu xmm0, [rcx];
    lea rdx, [rdx + 8*r8];
@@ -3273,8 +3294,15 @@ asm
    {$ENDIF}
 end;
 
-procedure AESEncode(Source, Dest: Pointer; NumRounds: Integer; Key: PLongWord); register;
+procedure AESEncode(Source, Dest: Pointer; NumRounds: Integer; Key: PLongWord); register; {$IFDEF FPC} assembler; {$ENDIF}
 asm
+   {$IF defined(X64ASM) and defined(UNIX)}
+   // System V x64: RDI, RSI, RDX, RCX. Body below uses Win64 RCX, RDX, R8, R9.
+   mov r9, rcx
+   mov r8, rdx
+   mov rdx, rsi
+   mov rcx, rdi
+   {$IFEND}
    {$IFDEF X64ASM}
    movupd xmm1, [rcx];
    movdqa xmm2, [r9];
@@ -3320,8 +3348,15 @@ asm
    {$ENDIF}
 end;
 
-procedure AESDecode(Source, Dest: Pointer; NumRounds: Integer; Key: PLongWord); register;
+procedure AESDecode(Source, Dest: Pointer; NumRounds: Integer; Key: PLongWord); register; {$IFDEF FPC} assembler; {$ENDIF}
 asm
+   {$IF defined(X64ASM) and defined(UNIX)}
+   // System V x64: RDI, RSI, RDX, RCX. Body below uses Win64 RCX, RDX, R8, R9.
+   mov r9, rcx
+   mov r8, rdx
+   mov rdx, rsi
+   mov rcx, rdi
+   {$IFEND}
    {$IFDEF X64ASM}
    movupd xmm1, [rcx];
    movdqa xmm2, [r9];

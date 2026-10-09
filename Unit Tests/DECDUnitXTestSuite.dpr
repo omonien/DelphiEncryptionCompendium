@@ -38,7 +38,8 @@ uses
   TestDECCipherPaddings in 'Tests\TestDECCipherPaddings.pas',
   TestDECZIPHelper in 'Tests\TestDECZIPHelper.pas',
   AuthenticatedCiphersCommonTestData in 'Tests\AuthenticatedCiphersCommonTestData.pas',
-  TestDECChaChaPoly1305 in 'Tests\TestDECChaChaPoly1305.pas';
+  TestDECChaChaPoly1305 in 'Tests\TestDECChaChaPoly1305.pas',
+  TestDECAESNI in 'Tests\TestDECAESNI.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}
