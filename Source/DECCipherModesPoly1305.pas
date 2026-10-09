@@ -40,13 +40,15 @@ type
   /// </summary>
   T32ByteArray = Array[0..31] of Byte;
   /// <summary>
-  ///   Selects the Poly1305 kernel. Default is pure Pascal until AVX is proven.
+  ///   Selects the Poly1305 kernel. pmAVX is used only when AVX2 is present
+  ///   at runtime; otherwise the pure Pascal kernel is used.
   /// </summary>
   TPoly1305CpuMode = (pmPas, pmAVX);
 
   /// <summary>
   ///   Poly1305 authenticator for AEAD (ChaCha20-Poly1305 / XChaCha20-Poly1305).
-  ///   Lifecycle matches package A: Init -> AAD/tag props -> Encode/Decode* -> Done -> tag.
+  ///   Lifecycle: Init, then AAD and tag properties, then Encode/Decode,
+  ///   then Done, then read CalculatedAuthenticationTag.
   /// </summary>
   TPoly1305 = class(TAuthenticatedCipherModesBase)
   private
@@ -100,7 +102,6 @@ type
     FPadAndFinalizeFunc : TPoly1305PadAndFinalize;
     FAuthDataHashed : Boolean;
     FTotalCiphertextBytes : UInt64;
-    FFinalized : Boolean;
 
     function U8ToU32( pData : PByteArray ) : UInt32; inline;
     procedure U32ToU8(pData : PByteArray; value : UInt32); inline;
@@ -128,6 +129,10 @@ type
     procedure Decode(Source, Dest: PUInt8Array; Size: Integer); override;
     procedure Done; override;
     function GetStandardAuthenticationTagBitLengths: TStandardBitLengths; override;
+    /// <summary>
+    ///   Poly1305 accepts several Encode/Decode calls before Done.
+    /// </summary>
+    function SupportsMultiChunk: Boolean; override;
   end;
 
 implementation
@@ -138,8 +143,6 @@ uses
   DECCPUSupport;
 
 resourcestring
-  sPoly1305AlreadyFinalized =
-    'Poly1305 authentication already finalized; call Init before further Encode/Decode';
   sPoly1305InvalidKeyLength =
     'Poly1305 one-time key (InitVector) must be 32 bytes';
 
@@ -668,23 +671,23 @@ begin
   FXMMMem := PUInt64(FAVXCtx);
   Dec(FAVXCtx);
 
-  case CpuMode of
-    pmPas:
-      begin
-        FPadAndFinalizeFunc := PadAndFinalizePAS;
-        FPolyBlkFunc := UpdatePoly;
-      end;
-    pmAVX:
-      begin
-        {$IFNDEF PUREPASCAL}
-        FPadAndFinalizeFunc := PadAndFinalizeAVX;
-        FPolyBlkFunc := UpdatePolyAVX;
-        {$ELSE}
-        FPadAndFinalizeFunc := PadAndFinalizePAS;
-        FPolyBlkFunc := UpdatePoly;
-        {$ENDIF}
-      end;
+  // AVX2 kernel only when this unit was compiled with asm and the CPU has AVX2.
+  // Every other case, including pmAVX on a CPU without AVX2, uses Pascal.
+  {$IFDEF PUREPASCAL}
+  FPadAndFinalizeFunc := PadAndFinalizePAS;
+  FPolyBlkFunc := UpdatePoly;
+  {$ELSE}
+  if (CpuMode = pmAVX) and TDEC_CPUSupport.AVX2 then
+  begin
+    FPadAndFinalizeFunc := PadAndFinalizeAVX;
+    FPolyBlkFunc := UpdatePolyAVX;
+  end
+  else
+  begin
+    FPadAndFinalizeFunc := PadAndFinalizePAS;
+    FPolyBlkFunc := UpdatePoly;
   end;
+  {$ENDIF}
   FPolyBlockSize := POLY1305_BLOCK_SIZE;
   FFinalized := False;
   FAuthDataHashed := False;
@@ -796,9 +799,9 @@ begin
      FNonce[2] := U8ToU32(@initVector[24]);
      FNonce[3] := U8ToU32(@initVector[28]);
 
-     // initialize avx members
+     // AVX state is required only by the AVX2 kernel. Pascal keeps r/s above.
      {$IFNDEF PUREPASCAL}
-     if CpuMode = pmAVX then
+     if (CpuMode = pmAVX) and TDEC_CPUSupport.AVX2 then
         InitPoly1305(FAVXCtx, @InitVector[0]);
      {$ENDIF}
      FNum := 0;
@@ -1191,8 +1194,7 @@ end;
 
 procedure TPoly1305.Encode(Source, Dest: PUInt8Array; Size: Integer);
 begin
-  if FFinalized then
-    raise EDECCipherException.CreateRes(@sPoly1305AlreadyFinalized);
+  CheckNotFinalized;
 
   EnsureAADAbsorbed;
 
@@ -1210,8 +1212,7 @@ end;
 
 procedure TPoly1305.Decode(Source, Dest: PUInt8Array; Size: Integer);
 begin
-  if FFinalized then
-    raise EDECCipherException.CreateRes(@sPoly1305AlreadyFinalized);
+  CheckNotFinalized;
 
   EnsureAADAbsorbed;
 
@@ -1235,7 +1236,7 @@ begin
   // AAD-only messages still need AAD absorption + length block + tag
   EnsureAADAbsorbed;
   FPadAndFinalizeFunc(Length(FDataToAuthenticate), Int64(FTotalCiphertextBytes));
-  FFinalized := True;
+  inherited;
 end;
 
 function TPoly1305.GetStandardAuthenticationTagBitLengths: TStandardBitLengths;
@@ -1244,9 +1245,21 @@ begin
   Result[0] := 128;
 end;
 
+function TPoly1305.SupportsMultiChunk: Boolean;
+begin
+  Result := True;
+end;
+
 
 initialization
-  // Default to pure Pascal until AVX is proven correct across targets.
+  // Pascal unless this build includes the AVX2 kernel and CPUID reports AVX2.
+  {$IFDEF PUREPASCAL}
   TPoly1305.CpuMode := pmPas;
+  {$ELSE}
+  if TDEC_CPUSupport.AVX2 then
+    TPoly1305.CpuMode := pmAVX
+  else
+    TPoly1305.CpuMode := pmPas;
+  {$ENDIF}
 
 end.

@@ -1213,8 +1213,8 @@ begin
 
   if Assigned(FAuthObj) then
   begin
-    // Finalize authentication (GCM GHASH / CCM CBC-MAC tag) before optional
-    // ExpectedTag check. Both modes materialize the tag in FAuthObj.Done.
+    // Finalize authentication (GCM GHASH, CCM CBC-MAC, Poly1305) before the
+    // optional ExpectedTag check. Each mode materializes the tag in FAuthObj.Done.
     FAuthObj.Done;
 
     if (Length(FAuthObj.ExpectedAuthenticationTag) > 0) and

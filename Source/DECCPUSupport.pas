@@ -46,6 +46,10 @@ type
     class var SSE: Boolean;
     class var SSE2: Boolean;
     class var SSE3: Boolean;
+    /// <summary>
+    ///   Supplemental SSE3 (pshufb, palignr). Distinct from SSE3.
+    /// </summary>
+    class var SSSE3: Boolean;
     class var SSE41: Boolean;
     class var SSE42: Boolean;
 
@@ -137,6 +141,8 @@ begin
     TDEC_CPUSupport.SSE2 := (Reg.EDX and (1 shl 26)) <> 0;
     // SSE3 is ECX bit 0 (bit 9 is SSSE3)
     TDEC_CPUSupport.SSE3 := (Reg.ECX and (1 shl 0)) <> 0;
+    // SSSE3 is ECX bit 9. ChaCha's SSE quarter round uses pshufb and palignr.
+    TDEC_CPUSupport.SSSE3 := (Reg.ECX and (1 shl 9)) <> 0;
     TDEC_CPUSupport.SSE41 := (Reg.ECX and (1 shl 19)) <> 0;
     TDEC_CPUSupport.SSE42 := (Reg.ECX and (1 shl 20)) <> 0;
     TDEC_CPUSupport.AES := (Reg.ECX and (1 shl 25)) <> 0;
@@ -171,6 +177,7 @@ initialization
   TDEC_CPUSupport.SSE := False;
   TDEC_CPUSupport.SSE2 := False;
   TDEC_CPUSupport.SSE3 := False;
+  TDEC_CPUSupport.SSSE3 := False;
   TDEC_CPUSupport.SSE41 := False;
   TDEC_CPUSupport.SSE42 := False;
   TDEC_CPUSupport.RDRand := False;

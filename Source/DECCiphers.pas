@@ -7593,7 +7593,8 @@ begin
   {$ELSE}
   case CpuMode of
     cmSSE:
-      if TDEC_CPUSupport.SSE3 then
+      // Quarter round uses pshufb and palignr, which are SSSE3.
+      if TDEC_CPUSupport.SSSE3 then
         fFullBlockFunc := FullBlockSSE
       else
         fFullBlockFunc := FullBlockPas;
@@ -7619,7 +7620,7 @@ begin
      if fChaChaIdx >= fChaChaBlkLen then
      begin
           {$IFNDEF PUREPASCAL}
-          if CpuMode = cmAVX then
+          if (CpuMode = cmAVX) and TDEC_CPUSupport.AVX2 then
           begin
                // move the input matrix so we have nicely aligned memory for the quarter round
                for i := 0 to 3 do
@@ -7655,7 +7656,7 @@ begin
                inc(m2^[12]);
 
                {$IFNDEF PUREPASCAL}
-               if cpuMode = cmSSE then
+               if (CpuMode = cmSSE) and TDEC_CPUSupport.SSSE3 then
                begin
                     for i := 0 to fNumChaChaRounds - 1 do
                     begin
@@ -7883,7 +7884,7 @@ begin
      Move(iv[0], fPHChaCha^[12], 4*sizeof(LongWord));
 
      {$IFNDEF PUREPASCAL}
-     if cpuMode = cmSSE then
+     if (CpuMode = cmSSE) and TDEC_CPUSupport.SSSE3 then
      begin
           for i := 0 to fNumChaChaRounds - 1 do
               SSEChaChaDoubleQuarterRound(fPHChaCha);
@@ -7939,8 +7940,18 @@ end;
 initialization
   SetDefaultCipherClass(TCipher_Null);
 
-  // Prefer pure Pascal until SIMD kernels are proven across targets.
+  // Pascal unless this build includes asm and CPUID reports a usable SIMD set.
+  // SSSE3 selects the SSE quarter round; AVX2 selects the AVX kernel.
+  {$IFDEF PUREPASCAL}
   TCipher_ChaCha20.CpuMode := cmPas;
+  {$ELSE}
+  if TDEC_CPUSupport.AVX2 then
+    TCipher_ChaCha20.CpuMode := cmAVX
+  else if TDEC_CPUSupport.SSSE3 then
+    TCipher_ChaCha20.CpuMode := cmSSE
+  else
+    TCipher_ChaCha20.CpuMode := cmPas;
+  {$ENDIF}
 
   {$IFNDEF ManualRegisterCipherClasses}
   TCipher_Null.RegisterClass(TDECCipher.ClassList);

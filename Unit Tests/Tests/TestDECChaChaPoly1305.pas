@@ -69,12 +69,14 @@ type
     procedure TestEmptyAAD;
     procedure TestWrongTagRaisesOnDone;
     procedure TestEncodeAfterDoneRejected;
+    procedure TestReadTagBeforeDoneRaises;
+    procedure TestPascalMatchesSimdKernels;
   end;
 
 implementation
 
 uses
-  DECCipherModesPoly1305, Classes, DECFormat, DECTypes;
+  DECCipherModesPoly1305, Classes, DECFormat, DECTypes, DECCPUSupport;
 
 type
   THackChaChaCipher = class(TCipher_ChaCha20);
@@ -625,6 +627,123 @@ begin
   end;
 
   Check(Raised, 'Encode after Done must raise EDECCipherException');
+end;
+
+procedure TestChaCha20Poly1305.TestReadTagBeforeDoneRaises;
+const
+  cKey: TBytes = [$80, $81, $82, $83, $84, $85, $86, $87, $88, $89, $8a, $8b, $8c, $8d, $8e, $8f,
+                  $90, $91, $92, $93, $94, $95, $96, $97, $98, $99, $9a, $9b, $9c, $9d, $9e, $9f];
+  cNonce: TBytes = [$07, $00, $00, $00, $40, $41, $42, $43, $44, $45, $46, $47];
+  cMsg: TBytes = [$00, $01, $02, $03, $04, $05, $06, $07, $08, $09];
+var
+  ChaCha: TCipher_ChaCha20;
+  Tag: TBytes;
+  Raised: Boolean;
+begin
+  TCipher_ChaCha20.CpuMode := cmPas;
+  TPoly1305.CpuMode := pmPas;
+  Raised := False;
+
+  ChaCha := TCipher_ChaCha20.Create;
+  try
+    ChaCha.Mode := cmPoly1305;
+    ChaCha.Init(cKey, cNonce);
+    ChaCha.EncodeBytes(cMsg);
+    try
+      Tag := ChaCha.CalculatedAuthenticationResult;
+    except
+      on E: EDECCipherException do
+        Raised := True;
+    end;
+    Check(Raised, 'CalculatedAuthenticationResult before Done must raise EDECCipherException');
+
+    ChaCha.Done;
+    Tag := ChaCha.CalculatedAuthenticationResult;
+    Check(Length(Tag) = 16, 'Tag must be readable after Done');
+  finally
+    ChaCha.Free;
+  end;
+end;
+
+function EncodePoly1305(AClass: TDECCipherClass; AChaCha: TChaChaCpuMode;
+  APoly: TPoly1305CpuMode; const AKey, ANonce, AAAD, AMsg: TBytes;
+  out ATag: TBytes): TBytes;
+var
+  Cipher: TDECFormattedCipher;
+begin
+  TCipher_ChaCha20.CpuMode := AChaCha;
+  TPoly1305.CpuMode := APoly;
+  Cipher := TDECFormattedCipher(AClass.Create);
+  try
+    Cipher.Mode := cmPoly1305;
+    Cipher.DataToAuthenticate := AAAD;
+    Cipher.Init(AKey, ANonce);
+    Result := Cipher.EncodeBytes(AMsg);
+    Cipher.Done;
+    ATag := Cipher.CalculatedAuthenticationResult;
+  finally
+    Cipher.Free;
+  end;
+end;
+
+procedure TestChaCha20Poly1305.TestPascalMatchesSimdKernels;
+const
+  cMsg: AnsiString = 'Ladies and Gentlemen of the class of ''99: If I could offer you only one tip for the future, sunscreen would be it.';
+  cAAD: TBytes = [$50, $51, $52, $53, $c0, $c1, $c2, $c3, $c4, $c5, $c6, $c7];
+  cKey: TBytes = [$80, $81, $82, $83, $84, $85, $86, $87, $88, $89, $8a, $8b, $8c, $8d, $8e, $8f,
+                  $90, $91, $92, $93, $94, $95, $96, $97, $98, $99, $9a, $9b, $9c, $9d, $9e, $9f];
+  cNonce: TBytes = [$07, $00, $00, $00, $40, $41, $42, $43, $44, $45, $46, $47];
+  cTag: TBytes = [$1a, $e1, $0b, $59, $4f, $09, $e2, $6a, $7e, $90, $2e, $cb, $d0, $60, $06, $91];
+  cXNonce: TBytes = [$40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $4a, $4b, $4c, $4d, $4e, $4f,
+                     $50, $51, $52, $53, $54, $55, $56, $57];
+  cXTag: TBytes = [$c0, $87, $59, $24, $c1, $c7, $98, $79, $47, $de, $af, $d8, $78, $0a, $cf, $49];
+var
+  Msg, PasCT, OtherCT, PasTag, OtherTag: TBytes;
+
+  procedure ExpectSame(const ALabel: string);
+  begin
+    Check(Length(OtherCT) = Length(PasCT), ALabel + ' ciphertext length');
+    Check(CompareMem(@OtherCT[0], @PasCT[0], Length(PasCT)), ALabel + ' ciphertext differs from Pascal');
+    Check(Length(OtherTag) = Length(PasTag), ALabel + ' tag length');
+    Check(CompareMem(@OtherTag[0], @PasTag[0], Length(PasTag)), ALabel + ' tag differs from Pascal');
+  end;
+
+  procedure CompareClass(AClass: TDECCipherClass; const ANonce, AExpectTag: TBytes;
+    const AName: string);
+  begin
+    PasCT := EncodePoly1305(AClass, cmPas, pmPas, cKey, ANonce, cAAD, Msg, PasTag);
+    Check(Length(PasTag) = Length(AExpectTag), AName + ' Pascal tag length');
+    Check(CompareMem(@PasTag[0], @AExpectTag[0], Length(AExpectTag)),
+      AName + ' Pascal tag mismatch');
+
+    if TDEC_CPUSupport.SSSE3 then
+    begin
+      OtherCT := EncodePoly1305(AClass, cmSSE, pmPas, cKey, ANonce, cAAD, Msg, OtherTag);
+      ExpectSame(AName + ' SSE ChaCha');
+    end;
+
+    if TDEC_CPUSupport.AVX2 then
+    begin
+      OtherCT := EncodePoly1305(AClass, cmAVX, pmPas, cKey, ANonce, cAAD, Msg, OtherTag);
+      ExpectSame(AName + ' AVX ChaCha');
+      OtherCT := EncodePoly1305(AClass, cmPas, pmAVX, cKey, ANonce, cAAD, Msg, OtherTag);
+      ExpectSame(AName + ' AVX2 Poly1305');
+      OtherCT := EncodePoly1305(AClass, cmAVX, pmAVX, cKey, ANonce, cAAD, Msg, OtherTag);
+      ExpectSame(AName + ' AVX ChaCha + AVX2 Poly1305');
+    end;
+  end;
+
+begin
+  SetLength(Msg, Length(cMsg));
+  Move(cMsg[1], Msg[0], Length(Msg));
+
+  try
+    CompareClass(TCipher_ChaCha20, cNonce, cTag, 'ChaCha20');
+    CompareClass(TCipher_XChaCha20, cXNonce, cXTag, 'XChaCha20');
+  finally
+    TCipher_ChaCha20.CpuMode := cmPas;
+    TPoly1305.CpuMode := pmPas;
+  end;
 end;
 
 { TestChaCha20Poly1305.TTestEnumerator }

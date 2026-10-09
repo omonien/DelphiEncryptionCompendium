@@ -901,8 +901,6 @@ end;
 
 function IsAuthenticatedBlockMode(BlockMode: TCipherMode): Boolean;
 begin
-  // Upstream keeps this predicate GCM-only. CCM and Poly1305 are handled
-  // explicitly at each call site (same pattern as cmCCM).
   Result := BlockMode = cmGCM;
 end;
 
