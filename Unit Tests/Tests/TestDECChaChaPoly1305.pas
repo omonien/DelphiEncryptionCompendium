@@ -80,7 +80,18 @@ uses
 
 type
   THackChaChaCipher = class(TCipher_ChaCha20);
-  THackPoly1305 = class(TPoly1305);
+  THackPoly1305 = class(TPoly1305)
+  public
+    // Tag bytes written by Finalize. CalculatedAuthenticationTag stays
+    // unavailable until Done. RFC 7539 section 2.5 is a bare MAC, and Done
+    // would append the AEAD length block and change these vectors.
+    function RawAuthenticationTag: TBytes;
+  end;
+
+function THackPoly1305.RawAuthenticationTag: TBytes;
+begin
+  Result := FCalcAuthenticationTag;
+end;
 
 { TestChaCha20Poly1305 }
 
@@ -218,7 +229,7 @@ begin
     THackPoly1305(Poly).InitInternal(IV);
     THackPoly1305(Poly).UpdatePoly(@Msg[0], Length(Msg));
     THackPoly1305(Poly).Finalize;
-    CalcTag := Poly.CalculatedAuthenticationTag;
+    CalcTag := THackPoly1305(Poly).RawAuthenticationTag;
   finally
     Poly.Free;
   end;
@@ -237,7 +248,7 @@ begin
     THackPoly1305(Poly).InitInternal(IV);
     THackPoly1305(Poly).UpdatePoly(@Msg[0], Length(Msg));
     THackPoly1305(Poly).Finalize;
-    CalcTag := Poly.CalculatedAuthenticationTag;
+    CalcTag := THackPoly1305(Poly).RawAuthenticationTag;
   finally
     Poly.Free;
   end;
