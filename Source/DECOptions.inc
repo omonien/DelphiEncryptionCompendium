@@ -73,32 +73,25 @@
 // Automatically register all hash classes
 {.$DEFINE ManualRegisterHashClasses} (* default off *)
 
-// if the compiler does not support assembler turn usage off and even if restrict
-// it to Windows, as those non Windows platforms which actually do support ASM
-// in Delphi do not use Intel x86 ASM
-{$IFDEF FPC }
-  {$IF defined(CPUX86_64) or defined(CPUAMD64) or defined(CPUIA64) }
+// Intel x86/x64 may use the assembler kernels. Every other target (ARM, iOS,
+// Android, and non-Intel Delphi) stays on the pure Pascal path via NO_ASM.
+// A 2023 FPC edit had inverted this and forced NO_ASM for all Delphi builds.
+{$IFDEF FPC}
+  {$IF defined(CPUX86_64) or defined(CPUAMD64) or defined(CPUIA64)}
     {$ifndef CPUX64}
         {$define CPUX64}
     {$endif}
-  {$else}{$if defined(CPU386) or defined(CPUI386) }
+  {$elseif defined(CPU386) or defined(CPUI386)}
       {$ifndef CPUX32}
           {$define CPUX32}
       {$endif}
   {$ELSE}
-      {$IFNDEF ASSEMBLER }
-        {$DEFINE NO_ASM} (* default ON *)
-      {$ELSE}
-        {$IFDEF WINDOWS}
-          {.$DEFINE NO_ASM} (* default OFF *)
-        {$ELSE}
-          {$DEFINE NO_ASM} (* default ON *)
-        {$ENDIF}
-      {$ENDIF}
-  {$ENDIF}{$endif}
+    {$DEFINE NO_ASM}
+  {$ENDIF}
 {$ELSE}
-  // Turn ASM off for FPC as we do not know enough about ASM support on FPC
-  {$DEFINE NO_ASM}
+  {$IF not (defined(CPUX86) or defined(CPUX64))}
+    {$DEFINE NO_ASM}
+  {$ENDIF}
 {$ENDIF}
 
 // Enable the following option to restore the *wrong* Identity behavior of
