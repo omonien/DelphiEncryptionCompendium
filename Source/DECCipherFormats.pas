@@ -749,14 +749,14 @@ begin
 
   if Length(Result) > 0 then
   begin
-    if (FMode = cmGCM) then
-      SetLength(Result, Length(Source));
+    // SetLength makes Result a unique copy, so decoding never overwrites
+    // the caller's Source array (Result := Source only shares the reference)
+    SetLength(Result, Length(Source));
 
     Decode(Source[0], Result[0], Length(Source));
   end
   else
-{ ToDO: Do we need to add cmPoly here? can we use [cm...,] syntax? }
-    if (FMode = cmGCM) or (FMode = cmCCM) then
+    if FMode in [cmGCM, cmCCM, cmPoly1305] then
       DecodeAuthenticated(nil, nil, 0);
 
   if not (FPaddingClass = nil) then
